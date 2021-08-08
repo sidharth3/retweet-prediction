@@ -11,6 +11,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torchvision import transforms
 import os
+import pandas as pd
+import seaborn as sns
 
 #for loss and accuracy graphs
 def plot_graph(graph_data, num_epochs, model):
@@ -44,3 +46,31 @@ def plot_graph(graph_data, num_epochs, model):
     
 def plot_bar(dataset_type):
     pass
+
+def plot_correlation_heatmap(df, corr_columns):
+
+  sns.heatmap(df[corr_columns].corr(), annot=True, cmap="viridis")
+  plt.title("Corelation Heatmap", fontsize=17)
+  plt.show()
+
+  return
+
+def plot_histogram(df, range, xlabel, ylabel, title):
+
+  df.plot.hist(bins=50, figsize=(10,5), edgecolor='white',range=range)
+  plt.xlabel(xlabel, fontsize=17)
+  plt.ylabel(ylabel, fontsize=17)
+  plt.tick_params(labelsize=15)
+  plt.title(title, fontsize=17)
+  plt.show()
+
+  return 
+
+def plot_box_plot(df, target, var, ymin, ymax):
+
+  data = pd.concat([df[target], df[var]], axis=1)
+  f, ax = plt.subplots(figsize=(10, 6))
+  fig = sns.boxplot(x=var, y=target, data=data)
+  fig.axis(ymin=ymin, ymax=ymax)
+
+  return
