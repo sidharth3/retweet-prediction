@@ -2,16 +2,14 @@ from dataloader import Dataloader
 import torch
 import torch.nn as nn
 import numpy as np
+from utils import get_varlen_pooling_list
 
 class DNN(nn.Module):
-    '''
-    ref: https://github.com/shenweichen/DeepCTR-Torch/blob/master/deepctr_torch/layers/core.py
-    '''
-    """The Multi Layer Percetron
-      Input shape
-        - nD tensor with shape: ``(batch_size, ..., input_dim)``. The most common situation would be a 2D input with shape ``(batch_size, input_dim)``.
-      Output shape
-        - nD tensor with shape: ``(batch_size, ..., hidden_size[-1])``. For instance, for a 2D input with shape ``(batch_size, input_dim)``, the output would have shape ``(batch_size, hidden_size[-1])``.
+    """
+      input
+        - nD tensor with shape: ``(batch_size, ..., input_dim)``
+      output
+        - nD tensor with shape: ``(batch_size, ..., hidden_size[-1])``
       Arguments
         - **inputs_dim**: input feature dimension.
         - **hidden_units**:list of positive integer, the layer number and units in each layer.

@@ -46,7 +46,7 @@ def init_embeddings(feature_index, unique_num_dic, sparse_features, dense_featur
                 unique_num_dic[feat], 1, sparse=False
             )
     #print(embedding_dict)
-
+    
     dnn_input_len = len(dense_features) + len(sparse_features) * 40 \
         + len(varlen_sparse_features) * 40
 
@@ -63,7 +63,7 @@ def init_embeddings(feature_index, unique_num_dic, sparse_features, dense_featur
         varlen_sparse_features=varlen_sparse_features,
         varlen_mode_list=['mean'],
         embedding_size=40,
-        batch_size=batch_size,
+        batch_size=512,
     )
     return model
 
@@ -150,7 +150,8 @@ def train(FOLD_DIR, SAVE_DIR, X_train, y_train, feature_index, unique_num_dic, s
 
     fold_best_scores = {} 
     for fold_idx in range(FOLD_NUM):
-
+        print("Training for Fold {}".format(fold_idx))
+        
         trn_idx = folds[folds.kfold != fold_idx].index.tolist()
         val_idx = folds[folds.kfold == fold_idx].index.tolist()
 
@@ -165,9 +166,9 @@ def train(FOLD_DIR, SAVE_DIR, X_train, y_train, feature_index, unique_num_dic, s
         model = init_embeddings(feature_index=feature_index,unique_num_dic=unique_num_dic, sparse_features=sparse_features, dense_features=dense_features, varlen_sparse_features=varlen_sparse_features, device=torch.device('cpu'))
         
         loss_func = nn.MSELoss(reduction='mean')
-        optim = torch.optim.Adam(model.parameters(), learning_rate=learning_rate)
+        optim = torch.optim.Adam(model.parameters(), lr=learning_rate)
         
-        scheduler = torch.optim.learning_rate_scheduler.CosineAnnealinglearning_rate(optim, T_max=epochs)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=epochs)
 
         loss_history = []
 
@@ -175,7 +176,7 @@ def train(FOLD_DIR, SAVE_DIR, X_train, y_train, feature_index, unique_num_dic, s
         best_score = 999.9
 
         for epoch in range(epochs):
-            
+            print("Epoch {}/{}".format(epoch, epochs))
             loss_history_epoch = []
             metric_history_epoch = []
 
@@ -190,8 +191,8 @@ def train(FOLD_DIR, SAVE_DIR, X_train, y_train, feature_index, unique_num_dic, s
                 y_pred = model(bx).squeeze()
 
                 loss = 0.0
-                for loss_f in loss_func:
-                    loss += loss_f(y_pred, by)
+                
+                loss += loss_func(y_pred, by)
                 loss = loss + model.reg_loss.item()
 
                 loss.backward()
@@ -218,8 +219,8 @@ def train(FOLD_DIR, SAVE_DIR, X_train, y_train, feature_index, unique_num_dic, s
 
             preds_val = model.predict(x_val, batch_size)
             val_loss = 0.0
-            for loss_f in loss_func:
-                val_loss += loss_f(torch.from_numpy(preds_val.reshape(-1, 1)), torch.from_numpy(y_val)).item()
+            
+            val_loss += loss_func(torch.from_numpy(preds_val.reshape(-1, 1)), torch.from_numpy(y_val)).item()
 
             try:
                 if label_log_scaling is True:
@@ -245,9 +246,55 @@ def train(FOLD_DIR, SAVE_DIR, X_train, y_train, feature_index, unique_num_dic, s
         history_path = f'{SAVE_DIR}/model/loss_history-{run_id}_fold{fold_idx}.csv'
         pd.DataFrame(loss_history, columns=['epoch', 'trn_loss', 'trn_metric', 'val_loss', 'val_metric']).to_csv(history_path)
         mlflow.log_artifact(history_path)
+        
+    return fold_best_scores, run_id
 
-def predict():
-    pass
+def predict(run_id, fold_best_scores, feature_index, unique_num_dic, folds, X_train, X_valid, X_test, batch_size, sparse_features, dense_features, varlen_sparse_features, FOLD_NUM, SAVE_DIR):
+    cv = 0.0
+    for fold_idx in range(FOLD_NUM):
+        cv += fold_best_scores[fold_idx][0]
+    cv /= FOLD_NUM
+
+    preds_train_val = np.zeros(len(X_train))
+    for fold_idx in range(FOLD_NUM):
+
+        val_idx = folds[folds.kfold == fold_idx].index.tolist()
+        x_val = X_train.iloc[val_idx]
+
+        model = init_embeddings(
+            feature_index=feature_index,
+            unique_num_dic=unique_num_dic, sparse_features=sparse_features, dense_features=dense_features, varlen_sparse_features=varlen_sparse_features, device=torch.device('cpu'))
+        
+        weight_path = fold_best_scores[fold_idx][1]
+        model.load_state_dict(torch.load(weight_path))
+
+        preds_train_val_fold = model.predict(x_val, batch_size)
+        preds_train_val[val_idx] = preds_train_val_fold
+
+        preds_valid = model.predict(X_valid, batch_size)
+        X_valid[f'preds_{fold_idx}'] = preds_valid
+
+        preds_test = model.predict(X_test, batch_size)
+        X_test[f'preds_{fold_idx}'] = preds_test
+
+    X_train['preds'] = preds_train_val
+    X_valid['preds'] = X_valid[[f'preds_{fold_idx}' for fold_idx in range(FOLD_NUM)]].mean()
+    X_test['preds'] = X_test[[f'preds_{fold_idx}' for fold_idx in range(FOLD_NUM)]].mean()
+
+    save_path = f'{SAVE_DIR}/predict/preds_train_val_{run_id}.csv'
+    X_train['preds'].to_csv(save_path, index=False, header=None)
+    mlflow.log_artifact(save_path)
+
+    save_path = f'{SAVE_DIR}/predict/preds_valid_{run_id}.csv'
+    X_valid['preds'].to_csv(save_path, index=False, header=None)
+    mlflow.log_artifact(save_path)
+
+    save_path = f'{SAVE_DIR}/predict/preds_test_{run_id}.csv'
+    X_test['preds'].to_csv(save_path, index=False, header=None)
+    mlflow.log_artifact(save_path)
+
+    #save_mlflow(run_id, cv, fold_best_scores)
+    mlflow.end_run()
 
 
 

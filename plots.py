@@ -20,7 +20,8 @@ def plot_graph(graph_data, num_epochs, model):
 
     plt.subplot(121)
     plt.title('Acc vs Epoch [Model {}]'.format(model))
-    plt.plot(range(1, num_epochs+1), graph_data['val_acc'], label='val_acc')
+    plt.plot(range(1, num_epochs+1), graph_data['trn_metric'], label='training - Mean Square Log Error')
+    plt.plot(range(1, num_epochs+1), graph_data['val_metric'], label='validation - Mean Square Log Error')
 
     plt.xlabel('Epoch')
     plt.ylabel('Acc')
@@ -29,8 +30,8 @@ def plot_graph(graph_data, num_epochs, model):
 
     plt.subplot(122)
     plt.title('Loss vs Epoch [Model {}]'.format(model))
-    plt.plot(range(1, num_epochs+1), graph_data['train_loss'], label='train_loss')
-    plt.plot(range(1, num_epochs+1), graph_data['val_loss'], label='val_loss')
+    plt.plot(range(1, num_epochs+1), graph_data['trn_loss'], label='train loss')
+    plt.plot(range(1, num_epochs+1), graph_data['val_loss'], label='val loss')
     plt.xticks((np.asarray(np.arange(1, num_epochs+1, 1.0))))
 
     plt.xlabel('Epoch')

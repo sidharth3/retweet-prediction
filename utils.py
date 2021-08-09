@@ -8,6 +8,9 @@ from sklearn.preprocessing import LabelEncoder
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 def week_of_month(dt):
     """ Returns the week of the month for the specified date.
@@ -372,3 +375,88 @@ def encode_varlen_target(feat, X_train, X_valid, X_test, y_train, fold):
     
 def map_varlen(x, dict):
     return [dict[i] for i in x]
+
+
+
+class SequencePoolingLayer(nn.Module):
+    """The SequencePoolingLayer is used to apply pooling operation(sum,mean,max) on variable-length sequence feature/multi-value feature.
+      Input shape
+        - A list of two  tensor [seq_value,seq_len]
+        - seq_value is a 3D tensor with shape: ``(batch_size, T, embedding_size)``
+        - seq_len is a 2D tensor with shape : ``(batch_size, 1)``,indicate valid length of each sequence.
+      Output shape
+        - 3D tensor with shape: ``(batch_size, 1, embedding_size)``.
+      Arguments
+        - **mode**:str.Pooling operation to be used,can be sum,mean or max.
+    """
+
+    def __init__(self, mode='mean', supports_masking=False, device='cpu'):
+
+        super(SequencePoolingLayer, self).__init__()
+        if mode not in ['sum', 'mean', 'max']:
+            raise ValueError('parameter mode should in [sum, mean, max]')
+        self.supports_masking = supports_masking
+        self.mode = mode
+        self.device = device
+        self.eps = torch.FloatTensor([1e-8]).to(device)
+        self.to(device)
+
+    def _sequence_mask(self, lengths, maxlen=None, dtype=torch.bool):
+        # Returns a mask tensor representing the first N positions of each cell.
+        if maxlen is None:
+            maxlen = lengths.max()
+        row_vector = torch.arange(0, maxlen, 1).to(self.device)
+        matrix = torch.unsqueeze(lengths, dim=-1)
+        mask = row_vector < matrix
+
+        mask.type(dtype)
+        return mask
+
+    def forward(self, seq_value_len_list):
+        if self.supports_masking:
+            uiseq_embed_list, mask = seq_value_len_list  # [B, T, E], [B, 1]
+            mask = mask.float()
+            user_behavior_length = torch.sum(mask, dim=-1, keepdim=True)
+            mask = mask.unsqueeze(2)
+        else:
+            uiseq_embed_list, user_behavior_length = seq_value_len_list  # [B, T, E], [B, 1]
+            mask = self._sequence_mask(user_behavior_length, maxlen=uiseq_embed_list.shape[1],
+                                       dtype=torch.float32)  # [B, 1, maxlen]
+            mask = torch.transpose(mask, 1, 2)  # [B, maxlen, 1]
+
+        embedding_size = uiseq_embed_list.shape[-1]
+
+        mask = torch.repeat_interleave(mask, embedding_size, dim=2)  # [B, maxlen, E]
+
+        if self.mode == 'max':
+            hist = uiseq_embed_list - (1 - mask) * 1e9
+            hist = torch.max(hist, dim=1, keepdim=True)[0]
+            return hist
+        hist = uiseq_embed_list * mask.float()
+        hist = torch.sum(hist, dim=1, keepdim=False)
+
+        if self.mode == 'mean':
+            hist = torch.div(hist, user_behavior_length.type(torch.float32) + self.eps)
+
+        hist = torch.unsqueeze(hist, dim=1)
+        return hist
+
+def get_varlen_pooling_list(embedding_dict, features, feature_index, varlen_sparse_feature_columns, mode_list, device):
+    varlen_sparse_embedding_list = []
+    for feat in varlen_sparse_feature_columns:
+        print(feat)
+        for mode in mode_list:
+            seq_emb = embedding_dict[f'{feat}__{mode}'](
+                features[:, feature_index[feat][0]:feature_index[feat][1]].long()
+            )
+            #print(seq_emb)
+            seq_mask = features[:, feature_index[feat][0]: feature_index[feat][1]].long() != 0
+
+            emb = SequencePoolingLayer(
+                mode=mode,
+                supports_masking=True,
+                device=device
+            )([seq_emb, seq_mask])
+            varlen_sparse_embedding_list.append(emb)
+
+    return varlen_sparse_embedding_list
