@@ -18,8 +18,6 @@ Sparse and dense features are concatenated as input into the model. The model co
 
 Each hidden block consists of a linear layer, a batch normalisation layer, ReLU activation function and lastly a dropout layer. The number of neurons in the linear layers of the first, second and third hidden block are 4096, 1024 and 128 respectively.
 
-## Environment Set Up
-
 ## Graphical User Interface (GUI) Demonstration
 
 To run the GUI, one has to run both the frontend as well as the backend that does the model prediction for the tweet. Run the following code in the terminal shell:
@@ -33,6 +31,10 @@ In another terminal shell, run the following:
 
 ```
 cd backend
+virtualenv flask
+cd flask
+source bin/activate
+cd ..
 python app.py
 ```
 
