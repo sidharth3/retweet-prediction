@@ -1,0 +1,55 @@
+import path from 'path'
+import fs from 'fs'
+import { controllaSlugFromUrl } from './transforms'
+import { report, reportAndThrowError } from './misc'
+
+const FETCH_TIMEOUT = 3000
+
+const fetchJson = async url => {
+  try {
+    return (await global.fetch(`${url}.json`, { timeout: FETCH_TIMEOUT })).json()
+  } catch (e) {
+    report(e)
+    reportAndThrowError(`Could not fetch ${url}.json`)
+  }
+}
+
+export const fetchStats = async controllaUrl => {
+  try {
+    return await fetchJson(controllaUrl)
+  } catch (e) {
+    report(e)
+    report(`Could not load the stats for ${controllaSlugFromUrl(controllaUrl)}`)
+  }
+}
+
+export const fetchLogo = async logoUrl => {
+  if (!logoUrl) {
+    // Silent return if no logo has been provided
+    return
+  }
+  if (!logoUrl.match(/^https?:\/\//)) {
+    reportAndThrowError(`Your logo URL isn't well-formatted - ${logoUrl}`)
+  }
+
+  try {
+    const res = (await global.fetch(logoUrl, { timeout: FETCH_TIMEOUT }))
+    if (isLogoResponseWellFormatted(res)) {
+      return res.text()
+    }
+    report(`Error while fetching logo from ${logoUrl}. The response wasn't well-formatted`)
+  } catch (e) {
+    report(`Error while fetching logo from ${logoUrl}`)
+  }
+}
+
+const isLogoResponseWellFormatted = res => res.status === 200 && res.headers.get('content-type').match(/^text\/plain/)
+
+export const fetchPkg = pathToPkg => {
+  const fullPathToPkg = path.resolve(`${pathToPkg}/package.json`)
+  try {
+    return JSON.parse(fs.readFileSync(fullPathToPkg, 'utf8'))
+  } catch (e) {
+    reportAndThrowError(`Could not find package.json at ${fullPathToPkg}`)
+  }
+}

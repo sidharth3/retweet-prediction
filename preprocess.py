@@ -4,6 +4,8 @@ from tqdm import tqdm
 from sklearn.model_selection import KFold
 from xfeat import TargetEncoder, CountEncoder
 from sklearn.cluster import KMeans
+import datetime
+from utils import *
 
 #feature extraction
 def init_features():
@@ -38,11 +40,11 @@ def init_features():
 
     varlen_ori_features = ['entities', 'mentions', 'hashtags', 'urls']
 
-    varlen_count_features = [f'{feat}_count' for feat in varlen_ori_features]
+    feature_count_features = [f'{feat}_count' for feat in varlen_ori_features]
 
-    varlen_count_encoding_source = ['entities', 'mentions', 'hashtags', 'urls']
+    feature_count_encoding_source = ['entities', 'mentions', 'hashtags', 'urls']
 
-    varlen_count_encoding_features = [f'{feat}_ce' for feat in varlen_count_encoding_source]
+    feature_count_encoding_features = [f'{feat}_ce' for feat in feature_count_encoding_source]
 
     varlen_target_encoding_source = ['entities', 'mentions', 'hashtags', 'urls']
 
@@ -79,7 +81,7 @@ def init_features():
     dense_features += count_encoded_features
     dense_features += target_encoded_features
     dense_features += text_tfidf_features
-    dense_features += varlen_count_encoding_features
+    dense_features += feature_count_encoding_features
     dense_features += varlen_target_encoding_features
     dense_features += user_stats_features
 
@@ -89,7 +91,7 @@ def init_features():
     sparse_features += sentiment_features
     sparse_features += tweet_metrics_bin_features
     sparse_features += time_cat_features
-    sparse_features += varlen_count_features
+    sparse_features += feature_count_features
     sparse_features += user_clustering_features
 
     #variable length FEATURES
@@ -110,7 +112,7 @@ def preprocess(feature_dir, X_train, X_valid, X_test, time_cat_features, time_nu
     X_test = extract_time_features(X_test)
 
     for feat in time_cat_features + time_num_features:
-        save_as_feather(feat, feature_dir, X_train, X_valid, X_test)
+        save_feature(feat, feature_dir, X_train, X_valid, X_test)
     
     X_train[['#followers', '#friends', '#favorites']] = X_train[['#followers', '#friends', '#favorites']].astype(int)
     X_valid[['#followers', '#friends', '#favorites']] = X_valid[['#followers', '#friends', '#favorites']].astype(int)
@@ -129,32 +131,42 @@ def preprocess(feature_dir, X_train, X_valid, X_test, time_cat_features, time_nu
     X_test['#followers__#friends__#favorites'] = X_test['#followers'] * X_test['#friends'] * X_test['#favorites']
 
     #LOG features -> apply log operation
+    print("Applying log transformation...")
     X_train[tweet_metrics_log_features] = (X_train[tweet_metrics_features] + 1).apply(np.log)
     X_valid[tweet_metrics_log_features] = (X_valid[tweet_metrics_features] + 1).apply(np.log)
     X_test[tweet_metrics_log_features] = (X_test[tweet_metrics_features] + 1).apply(np.log)
 
     X_all = pd.concat([X_train, X_valid, X_test])
     X_all[tweet_metrics_features] = X_all[tweet_metrics_features].astype(int)
+
+    print("Applying rank transformation...")
     
     for feat in tweet_metrics_features:
-        mean = X_all[feat].mean()
-        std = X_all[feat].std()
-        
+
         X_all[f'{feat}_rank'] = X_all[feat].rank(method='min')
         X_train[f'{feat}_rank'] = X_all.iloc[:len(X_train), :][f'{feat}_rank']
         X_valid[f'{feat}_rank'] = X_all.iloc[len(X_train):len(X_train) + len(X_valid), :][f'{feat}_rank']
         X_test[f'{feat}_rank'] = X_all.iloc[len(X_train) + len(X_valid):, :][f'{feat}_rank']
+
     
+    print("Performing quantile binning...")
+
     for feat in tweet_metrics_features:
-        X_train, X_valid, X_test = quantile_binning(feat, X_train, X_valid, X_test, nbin=nbin)
+        X_train, X_valid, X_test = qbin_transform(feat, X_train, X_valid, X_test, nbin=10)
+
+    print("Saving features...")
 
     for feat in tweet_metrics_bin_features:
-        save_as_feather(feat, feature_dir, X_train, X_valid, X_test)
-
-    X_train = mod_sentiment(X_train)
-    X_valid = mod_sentiment(X_valid)
-    X_test = mod_sentiment(X_test)
-
+        save_feature(feat, feature_dir, X_train, X_valid, X_test)
+    
+    print("Splitting sentiments...")
+    
+    X_train = split_sentiment(X_train)
+    X_valid = split_sentiment(X_valid)
+    X_test = split_sentiment(X_test)
+    
+    print("Preprocessing entities...")
+    
     X_train = preprocess_entities(X_train) #puts the entities as a list
     X_valid = preprocess_entities(X_valid)
     X_test = preprocess_entities(X_test)
@@ -163,6 +175,8 @@ def preprocess(feature_dir, X_train, X_valid, X_test, time_cat_features, time_nu
     X_train['mentions'] = X_train['mentions'].astype(str)
     X_valid['mentions'] = X_valid['mentions'].astype(str)
     X_test['mentions'] = X_test['mentions'].astype(str)
+
+    print("Preprocessing varlen features...")
 
     X_train = preprocess_varlen(X_train, 'mentions')
     X_valid = preprocess_varlen(X_valid, 'mentions')
@@ -181,12 +195,16 @@ def preprocess(feature_dir, X_train, X_valid, X_test, time_cat_features, time_nu
     X_test = preprocess_varlen(X_test, 'urls')
 
     for feat in varlen_ori_features:
-        X_train[f'{feat}_count'] = X_train[feat].apply(varlen_count)
-        X_valid[f'{feat}_count'] = X_valid[feat].apply(varlen_count)
-        X_test[f'{feat}_count'] = X_test[feat].apply(varlen_count)
+        X_train[f'{feat}_count'] = X_train[feat].apply(feature_count)
+        X_valid[f'{feat}_count'] = X_valid[feat].apply(feature_count)
+        X_test[f'{feat}_count'] = X_test[feat].apply(feature_count)
     
+    
+    print("Extracting TFIDF for varlen features...")
+
     X_train, X_valid, X_test = extract_text_tfidf(X_train, X_valid, X_test)
     
+    print("Encoding count and target of the features...")
     encoder = CountEncoder(input_cols=to_encode_count)
 
     X_train = encoder.fit_transform(X_train)
@@ -205,23 +223,25 @@ def preprocess(feature_dir, X_train, X_valid, X_test, time_cat_features, time_nu
     X_test = encoder.transform(X_test)
 
     for feat in varlen_ori_features:
-        X_train, X_valid, X_test = varlen_count_encording(feat, X_train, X_valid, X_test)
+        X_train, X_valid, X_test = encode_varlen_count(feat, X_train, X_valid, X_test)
 
     scaler, y_train = label_scaling(y_train)
     fold = KFold(n_splits=5, random_state=45, shuffle=True)
 
 
     for feat in varlen_ori_features:
-        X_train, X_valid, X_test = varlen_target_encording(feat, X_train, X_valid, X_test, y_train, fold)
+        X_train, X_valid, X_test = encode_varlen_target(feat, X_train, X_valid, X_test, y_train, fold)
 
 
-    import datetime
+    
     X_all = pd.concat([X_train, X_valid, X_test], axis=0)
+
 
     timestamp = []
 
+    print("Creating user-modelling features...")
     for x in tqdm(X_all['timestamp'].values, total=len(X_all)):
-        timestamp.append(datetime.datetime.strptime(' '.join(x.split(' ')[1:]), '%b %d %H:%M:%S %z %Y'))
+        timestamp.append(datetime.strptime(' '.join(x.split(' ')[1:]), '%b %d %H:%M:%S %z %Y'))
 
     X_all['timestamp'] = timestamp
 
@@ -568,6 +588,9 @@ def preprocess(feature_dir, X_train, X_valid, X_test, time_cat_features, time_nu
     user_features = pd.DataFrame()
     user_features['username'] = users
 
+    dim_red_dim = 5
+    dim_red_name = 'svd'
+    n_gram = 1
     features = tfidf_reduce(user_entities, n_gram=n_gram, n_components=dim_red_dim, dr_name=dim_red_name)
     features = features.add_prefix('entities_TFIDF_{}_'.format(dim_red_name))
     user_features = pd.concat([
@@ -660,25 +683,25 @@ def preprocess(feature_dir, X_train, X_valid, X_test, time_cat_features, time_nu
         X_train[feat] = (X_train[feat] - min_v) / (max_v - min_v)
         X_valid[feat] = (X_valid[feat] - min_v) / (max_v - min_v)
         X_test[feat] = (X_test[feat] - min_v) / (max_v - min_v)
-        save_as_feather(feat, feature_dir, X_train, X_valid, X_test)
+        save_feature(feat, feature_dir, X_train, X_valid, X_test)
 
     for feat in sparse_features:
         if feat in user_features:
-            X_train, X_valid, X_test, key2index, unique_num = label_encording_threshold(
+            X_train, X_valid, X_test, key2index, unique_num = user_encoding(
                 feat, X_train, X_valid, X_test, low_freq_th=1
             )
-            save_as_feather(feat, feature_dir, X_train, X_valid, X_test)
+            save_feature(feat, feature_dir, X_train, X_valid, X_test)
         else:
-            X_train, X_valid, X_test, unique_num = label_encording(
+            X_train, X_valid, X_test, unique_num = label_encoding(
                 feat, X_train, X_valid, X_test
             )
-            save_as_feather(feat, feature_dir, X_train, X_valid, X_test)
+            save_feature(feat, feature_dir, X_train, X_valid, X_test)
 
     for feat in varlen_ori_features:
-        X_train, X_valid, X_test, key2index, unique_num = varlen_label_encording_threshold(
+        X_train, X_valid, X_test, key2index, unique_num = varlen_encoding(
             feat, X_train, X_valid, X_test, low_freq_th=1
         )
-        save_as_feather(feat, feature_dir, X_train, X_valid, X_test)
+        save_feature(feat, feature_dir, X_train, X_valid, X_test)
 
     
 
@@ -712,7 +735,7 @@ def main(input_dir, feature_dir, feature_list):
             user_stats_features, dense_features, sparse_features)
     
 
-if __name__==__main__:
+if __name__=='__main__':
     input_dir = '/content/drive/MyDrive/dataset/data/'
     feature_dir = '/content/drive/MyDrive/dataset/feat_new/'
     feature_list  = ["tweetId", "username", "timestamp", "#followers", "#friends", "#retweets", "#favorites", "entities", "sentiment", "mentions", "hashtags", "urls"]

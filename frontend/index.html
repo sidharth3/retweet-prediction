@@ -1,0 +1,67 @@
+<html>
+  <head>
+    <link rel="stylesheet" href="main.css" />
+    <title>Twitter Retweet Prediction</title>
+  </head>
+  <body>
+    <div id="twitter">
+      <header>
+        <div class="inner">
+          <div class="headerSection">
+            <router-link to="/home" class="link">Home</router-link>
+          </div>
+          <div class="headerSection">
+            <img src="./images/twitter.png" width="24" height="21" />
+          </div>
+          <div class="headerSection">
+            <router-link to="/predictRetweet" class="tweetLink"
+              >Predict Retweet</router-link
+            >
+            <router-link to="/addTweet" class="tweetLink">Tweet</router-link>
+          </div>
+        </div>
+      </header>
+
+      <router-view></router-view>
+    </div>
+
+    <script src="//cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <script src="//unpkg.com/vue-router/dist/vue-router.js"></script>
+    <script src="//unpkg.com/http-vue-loader"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue-loading-overlay@3.4.2/dist/vue-loading.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue-loading-overlay@3"></script>
+    <link
+      href="https://cdn.jsdelivr.net/npm/vue-loading-overlay@3/dist/vue-loading.css"
+      rel="stylesheet"
+    />
+
+    <script src="./store.js"></script>
+
+    <script>
+      const addTweet = httpVueLoader("./addTweet.vue");
+      const predictRetweet = httpVueLoader("./predictRetweet.vue");
+      const feed = httpVueLoader("./feed.vue");
+
+      const routes = [
+        { path: "/home", component: feed },
+        { path: "/addTweet", component: addTweet },
+        { path: "/predictRetweet", component: predictRetweet },
+      ];
+
+      const router = new VueRouter({
+        routes,
+      });
+
+      new Vue({
+        router,
+        data: store.data,
+        methods: {
+          addtweet() {
+            this.feed.push(tweet);
+          },
+        },
+      }).$mount("#twitter");
+    </script>
+  </body>
+</html>

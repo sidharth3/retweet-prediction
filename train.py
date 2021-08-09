@@ -14,14 +14,14 @@ from tensorflow.python.keras.preprocessing.sequence import pad_sequences
 from dataloader import Dataloader
 from model import DNN
 from model import MLP
+from utils import label_inverse_scaling, label_scaling
 
-
-def init_embeddings(feature_index, unique_num_dic):
-    
+def init_embeddings(feature_index, unique_num_dic, sparse_features, dense_features, varlen_sparse_features, device):
+    VARLEN_MODE_LIST = ['mean']
     embedding_dict = nn.ModuleDict(
         {
             feat: nn.Embedding(
-                unique_num_dic[feat], SPARSE_EMBEDDING_DIM, sparse=SPARSE_EMBEDDING
+                unique_num_dic[feat], 40, sparse=False
             ) for feat in sparse_features
         }
     )
@@ -30,47 +30,47 @@ def init_embeddings(feature_index, unique_num_dic):
         for feat in varlen_sparse_features:
           
             embedding_dict[f'{feat}__{mode}'] = nn.Embedding(
-                unique_num_dic[feat], SPARSE_EMBEDDING_DIM, sparse=SPARSE_EMBEDDING
+                unique_num_dic[feat], 40, sparse=False
             )
 
     linear_embedding_dict = nn.ModuleDict(
         {
             feat: nn.Embedding(
-                unique_num_dic[feat], 1, sparse=SPARSE_EMBEDDING
+                unique_num_dic[feat], 1, sparse=False
             ) for feat in sparse_features
         }
     )
     for mode in VARLEN_MODE_LIST:
         for feat in varlen_sparse_features:
             linear_embedding_dict[f'{feat}__{mode}'] = nn.Embedding(
-                unique_num_dic[feat], 1, sparse=SPARSE_EMBEDDING
+                unique_num_dic[feat], 1, sparse=False
             )
     #print(embedding_dict)
-    if MODEL_NAME == 'MLP':
-        dnn_input_len = len(dense_features) + len(sparse_features) * SPARSE_EMBEDDING_DIM \
-            + len(varlen_sparse_features) * len(VARLEN_MODE_LIST) * SPARSE_EMBEDDING_DIM
 
-        model = MLP(
-            dnn_input=dnn_input_len,
-            dnn_hidden_units=DNN_HIDDEN_UNITS,
-            dnn_dropout=DNN_DROPOUT,
-            activation=DNN_ACTIVATION, use_bn=True, l2_reg=L2_REG, init_std=INIT_STD,
-            device=DEVICE,
-            feature_index=feature_index,
-            embedding_dict=embedding_dict,
-            dense_features=dense_features,
-            sparse_features=sparse_features,
-            varlen_sparse_features=varlen_sparse_features,
-            varlen_mode_list=VARLEN_MODE_LIST,
-            embedding_size=SPARSE_EMBEDDING_DIM,
-            batch_size=BATCH_SIZE,
-        )
+    dnn_input_len = len(dense_features) + len(sparse_features) * 40 \
+        + len(varlen_sparse_features) * 40
+
+    model = MLP(
+        dnn_input=dnn_input_len,
+        dnn_hidden_units=(4096, 1028, 256),
+        dnn_dropout=0.1,
+        activation='relu', use_bn=True, l2_reg=1e-4, init_std=1e-4,
+        device=device,
+        feature_index=feature_index,
+        embedding_dict=embedding_dict,
+        dense_features=dense_features,
+        sparse_features=sparse_features,
+        varlen_sparse_features=varlen_sparse_features,
+        varlen_mode_list=['mean'],
+        embedding_size=40,
+        batch_size=batch_size,
+    )
     return model
 
-def extract_saved_features(dense_features, sparse_features, varlen_sparse_features):
+def extract_saved_features(dense_features, sparse_features, varlen_sparse_features, FEATURE_DIR, VARLEN_MAX_LEN, y_train):
 
 
-    scaler, y_train = label_scaling(y_train)
+    scaler, y_train = label_scaling(y_train) ##import from utils
 
     unique_num_dic = {}
     feature_index = {}
@@ -137,7 +137,8 @@ def extract_saved_features(dense_features, sparse_features, varlen_sparse_featur
 
     return X_train, X_valid, X_test, unique_num_dic, feature_index, scaler, y_train
 
-def train(FOLD_DIR, X_train, y_train, feature_index, unique_num_dic, scaler):
+def train(FOLD_DIR, SAVE_DIR, X_train, y_train, feature_index, unique_num_dic, scaler, batch_size, learning_rate, epochs, device, label_log_scaling,\
+    sparse_features, dense_features, varlen_sparse_features):
     folds = pd.read_csv(f'{FOLD_DIR}/train_folds_1month_5fold10_RS45.csv', nrows=100000)
     FOLD_NUM = 5
 
@@ -158,22 +159,22 @@ def train(FOLD_DIR, X_train, y_train, feature_index, unique_num_dic, scaler):
         x_val = X_train.iloc[val_idx]
         y_val = y_train[val_idx]
 
-        train_loader = Dataloader([torch.from_numpy(x_trn.values), torch.from_numpy(y_trn)], batch_size=BATCH_SIZE,
+        train_loader = Dataloader([torch.from_numpy(x_trn.values), torch.from_numpy(y_trn)], batch_size=batch_size,
                     shuffle=True)
 
-        model = init_embeddings(feature_index=feature_index,unique_num_dic=unique_num_dic)
+        model = init_embeddings(feature_index=feature_index,unique_num_dic=unique_num_dic, sparse_features=sparse_features, dense_features=dense_features, varlen_sparse_features=varlen_sparse_features, device=torch.device('cpu'))
         
         loss_func = nn.MSELoss(reduction='mean')
-        optim = torch.optim.Adam(model.parameters(), lr=LR)
+        optim = torch.optim.Adam(model.parameters(), learning_rate=learning_rate)
         
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=EPOCH_NUM)
+        scheduler = torch.optim.learning_rate_scheduler.CosineAnnealinglearning_rate(optim, T_max=epochs)
 
         loss_history = []
 
-        steps_per_epoch = (len(x_trn) - 1) // BATCH_SIZE + 1
+        steps_per_epoch = (len(x_trn) - 1) // batch_size + 1
         best_score = 999.9
 
-        for epoch in range(EPOCH_NUM):
+        for epoch in range(epochs):
             
             loss_history_epoch = []
             metric_history_epoch = []
@@ -184,8 +185,8 @@ def train(FOLD_DIR, X_train, y_train, feature_index, unique_num_dic, scaler):
 
                 optim.zero_grad()
 
-                bx = bx.to(DEVICE).float()
-                by = by.to(DEVICE).float().squeeze()
+                bx = bx.to(device).float()
+                by = by.to(device).float().squeeze()
                 y_pred = model(bx).squeeze()
 
                 loss = 0.0
@@ -200,7 +201,7 @@ def train(FOLD_DIR, X_train, y_train, feature_index, unique_num_dic, scaler):
                 y_np = by.cpu().detach().numpy().reshape(-1, 1)
 
                 try:
-                    if LABEL_LOG_SCALING is True:
+                    if label_log_scaling is True:
                         y_pred_inv = label_inverse_scaling(scaler, y_pred_np)
                         y_inv = label_inverse_scaling(scaler, y_np)
                         mlse = mean_squared_log_error(y_inv, y_pred_inv)
@@ -215,13 +216,13 @@ def train(FOLD_DIR, X_train, y_train, feature_index, unique_num_dic, scaler):
             trn_loss_epoch = sum(loss_history_epoch) / len(loss_history_epoch)
             trn_metric_epoch = sum(metric_history_epoch) / len(metric_history_epoch)
 
-            preds_val = model.predict(x_val, BATCH_SIZE)
+            preds_val = model.predict(x_val, batch_size)
             val_loss = 0.0
             for loss_f in loss_func:
                 val_loss += loss_f(torch.from_numpy(preds_val.reshape(-1, 1)), torch.from_numpy(y_val)).item()
 
             try:
-                if LABEL_LOG_SCALING is True:
+                if label_log_scaling is True:
                     preds_val_inv = label_inverse_scaling(scaler, preds_val.reshape(-1, 1))
                     y_val_inv = label_inverse_scaling(scaler, y_val)
                     val_metric = mean_squared_log_error(y_val_inv, preds_val_inv)
@@ -246,10 +247,11 @@ def train(FOLD_DIR, X_train, y_train, feature_index, unique_num_dic, scaler):
         mlflow.log_artifact(history_path)
 
 def predict():
-    
+    pass
 
 
-if __name__ == __main__:
+
+if __name__ == '__main__':
 
     INPUT_DIR = '/content/drive/MyDrive/dataset/data/'
     FEATURE_DIR = '/content/drive/MyDrive/dataset/feat_new/'
@@ -264,8 +266,8 @@ if __name__ == __main__:
 
     MODEL_NAME = 'MLP'
 
-    EPOCH_NUM = 10
-    BATCH_SIZE = 512
+    epochs = 10
+    batch_size = 512
     DNN_HIDDEN_UNITS = (4096, 1024, 128)  # (2048, 512, 128)  # (4096, 1024, 128)
     DNN_DROPOUT = 0.1
     DNN_ACTIVATION = 'relu'
@@ -276,11 +278,13 @@ if __name__ == __main__:
     SPARSE_EMBEDDING = False
     VARLEN_MAX_LEN = 5
     VARLEN_MODE_LIST = ['mean']
-    LR = 0.001
+    learning_rate = 0.001
     OPTIMIZER = 'adam'
     LOSS = 'MAE'  # 'MSE', 'MAE'
 
-    LABEL_LOG_SCALING = True
+    label_log_scaling = True
+
+
 
     
 

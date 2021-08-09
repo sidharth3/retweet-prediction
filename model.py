@@ -1,3 +1,8 @@
+from dataloader import Dataloader
+import torch
+import torch.nn as nn
+import numpy as np
+
 class DNN(nn.Module):
     '''
     ref: https://github.com/shenweichen/DeepCTR-Torch/blob/master/deepctr_torch/layers/core.py
@@ -139,7 +144,7 @@ class MLP(nn.Module):
     def predict(self, x, batch_size=256):
 
         model = self.eval()
-        test_loader = SimpleDataLoader(
+        test_loader = Dataloader(
             [torch.from_numpy(x.values)],
             batch_size=batch_size,
             shuffle=False
